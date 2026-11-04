@@ -4125,6 +4125,12 @@ def require_mlp_tp_gather(*, moe_a2a_backend=None):
             return True
         elif moe_a2a_backend.is_none():
             return True
+        elif (
+            moe_a2a_backend.is_ascend_fuseep()
+            and envs.SGLANG_ZBAL_LOCAL_MEM_SIZE.get() > 0
+        ):
+            # DFC remote offsets require the same graph bucket on every EP rank.
+            return True
         elif moe_a2a_backend.is_flashinfer() or moe_a2a_backend.is_mori_epv2():
             # FlashInfer/MORI EPv2 A2A need a rank-invariant, DP-synchronized per-rank
             # token count: MoeAlltoAll uses fixed-geometry buffers and the decode

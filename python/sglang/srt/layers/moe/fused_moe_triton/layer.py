@@ -609,6 +609,15 @@ class FusedMoE(torch.nn.Module):
             moe_intermediate_size=intermediate_size,
         )
 
+        if get_moe_a2a_backend().is_ascend_fuseep():
+            from sglang.srt.hardware_backend.npu.moe.zbal_dfc import (
+                use_zbal_dfc,
+                validate_zbal_dfc,
+            )
+
+            if use_zbal_dfc():
+                validate_zbal_dfc(self)
+
         self.quant_method.create_moe_runner(self, self.moe_runner_config)
         self.runner_backend = self.quant_method.get_moe_runner_backend(self)
         self.moe_runner_config.runner_backend = self.runner_backend

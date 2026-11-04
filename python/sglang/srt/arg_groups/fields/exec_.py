@@ -908,7 +908,8 @@ class ExecMoe(msgspec.Struct):
     ] = "auto"
     fuseep_mode: A[
         Literal[1, 2],
-        "Select the mode when enable Ascend FuseEP MoE, 1 -> dispatch_gmm_combine_decode is executed；2 -> dispatch_ffn_combine is executed (support hybrid deployment when 2).",
+        "Ascend FuseEP mode: 1 runs dispatch_gmm_combine_decode; 2 runs dispatch_ffn_combine. "
+        "With SGLANG_ZBAL_LOCAL_MEM_SIZE > 0, mode 2 selects ZBAL DFC.",
     ] = 2
     deepep_dispatcher_output_dtype: A[
         Literal["auto", "bf16", "fp8", "int8", "nvfp4"],

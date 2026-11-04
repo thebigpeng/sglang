@@ -26,6 +26,7 @@ import torch
 from sglang.srt.batch_overlap.two_batch_overlap import TboCudaGraphRunnerPlugin
 from sglang.srt.compilation.torch_compile_decoration import set_torch_compile_config
 from sglang.srt.environ import envs
+from sglang.srt.hardware_backend.npu.moe.zbal_dfc import zbal_dfc_batch
 from sglang.srt.layers import deep_gemm_wrapper
 from sglang.srt.layers.dp_attention import (
     DpPaddingMode,
@@ -762,8 +763,13 @@ class BaseRunner(ABC):
 
         torch.get_device_module(mr.device).synchronize()
         get_parallel().tp_group.barrier()
-        with forward_context(
-            ForwardContext(attn_backend=mr.attn_backend), forward_batch=forward_batch
+        with (
+            forward_context(
+                ForwardContext(attn_backend=mr.attn_backend), forward_batch=forward_batch
+            ),
+            zbal_dfc_batch(
+                "prefill" if capture_forward_mode.is_extend() else "decode", num_tokens
+            ),
         ):
             with run_ctx or empty_context():
                 run_once()

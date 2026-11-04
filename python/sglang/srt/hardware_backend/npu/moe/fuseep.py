@@ -43,6 +43,14 @@ def forward_fuseep(
     hidden_states: torch.Tensor,
     topk_output: TopKOutput,
 ) -> torch.Tensor:
+    from sglang.srt.hardware_backend.npu.moe.zbal_dfc import (
+        forward_zbal_dfc,
+        use_zbal_dfc,
+    )
+
+    if use_zbal_dfc():
+        return forward_zbal_dfc(layer, hidden_states, topk_output)
+
     buf = _get_fuseep_buffer(layer)
     hidden_states, _ = buf.fused_deep_moe(
         hidden_states,

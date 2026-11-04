@@ -20,6 +20,7 @@ from sglang.srt.hardware_backend.npu.moe.matmul import (
     GroupedMatmulSwigluQuant,
 )
 from sglang.srt.hardware_backend.npu.moe.quant import HiddenStatesDynamicQuant
+from sglang.srt.hardware_backend.npu.moe.zbal_dfc import process_zbal_dfc_weights
 from sglang.srt.hardware_backend.npu.quantization.linear_method_npu import (
     _get_float4_e2m1fn_x2_dtype,
     _get_float8_e8m0fnu_dtype,
@@ -433,6 +434,8 @@ class NPUW4A4MXFP4MoEMethod(_NPUMoEMethodBase):
     def process_weights_after_loading(
         self, layer: torch.nn.Module, weight_prefix: str
     ) -> None:
+        if process_zbal_dfc_weights(layer, weight_prefix, "mxfp4"):
+            return
         self._validate_weight_prefix(layer, weight_prefix)
 
         weight = getattr(layer, f"{weight_prefix}_weight")
@@ -658,6 +661,8 @@ class NPUW8A8Int8MoEMethod(_NPUMoEMethodBase):
     def process_weights_after_loading(
         self, layer: torch.nn.Module, weight_prefix: str
     ) -> None:
+        if process_zbal_dfc_weights(layer, weight_prefix, "int8"):
+            return
         # If the FuseEP weight layout is used, process weights via
         # maybe_apply_fuseep_weights and skip the rest of this method.
         if self.maybe_process_fuseep_weights(layer):
@@ -1126,6 +1131,8 @@ class NPUMXFP8MoEMethod(_NPUMoEMethodBase):
     def process_weights_after_loading(
         self, layer: torch.nn.Module, weight_prefix: str
     ) -> None:
+        if process_zbal_dfc_weights(layer, weight_prefix, "mxfp8"):
+            return
         self._validate_weight_prefix(layer, weight_prefix)
 
         weight: torch.Tensor = getattr(layer, f"{weight_prefix}_weight").data

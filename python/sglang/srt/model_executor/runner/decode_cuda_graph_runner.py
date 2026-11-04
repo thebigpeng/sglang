@@ -42,6 +42,7 @@ from sglang.srt.compilation.torch_compile_decoration import set_torch_compile_co
 from sglang.srt.distributed.parallel_state import graph_capture
 from sglang.srt.dllm.config import DllmConfig
 from sglang.srt.environ import envs
+from sglang.srt.hardware_backend.npu.moe.zbal_dfc import zbal_dfc_batch
 from sglang.srt.kernel_plugins.nvidia.binding import megakernel_verify_variants
 from sglang.srt.layers.attention.base_attn_backend import (
     SharedReadEnds,
@@ -1399,9 +1400,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
 
             def run_once():
                 # Debug replay retains this callback beyond the capture scope.
-                with forward_context(
-                    ForwardContext(attn_backend=attn_backend),
-                    forward_batch=forward_batch,
+                with (
+                    forward_context(
+                        ForwardContext(attn_backend=attn_backend),
+                        forward_batch=forward_batch,
+                    ),
+                    zbal_dfc_batch("decode", num_tokens),
                 ):
                     if forward_batch.lora_ids is not None:
                         self.model_runner.lora_manager.reset_routing_cache()

@@ -1155,6 +1155,34 @@ class ModelRunner:
         self.prefill_attention_backend_str = resolved.prefill
         self.decode_attention_backend_str = resolved.decode
         backends = build_attention_backends(model_runner=self)
+        if self.device == "npu":
+            from sglang.srt.hardware_backend.npu import utils as npu_utils
+            from sglang.srt.hardware_backend.npu.moe.zbal_dfc import (
+                init_zbal_dfc_buffer,
+                use_zbal_dfc,
+            )
+
+            if use_zbal_dfc():
+                if self.is_draft_worker:
+                    for layer in self.model.modules():
+                        if getattr(layer, "_zbal_dfc_weight_prefixes", None):
+                            message = (
+                                "ZBAL DFC does not support MoE draft graph runners, "
+                                f"is_draft_worker={self.is_draft_worker}, layer_id={layer.layer_id}"
+                            )
+                            logger.error(message)
+                            raise ValueError(message)
+                else:
+                    # SSM construction returns before the usual GVA setup.
+                    if not npu_utils.gva_is_inited:
+                        npu_utils.lazy_init_zbal_gva_mem(
+                            self.device,
+                            self.gpu_id,
+                            get_parallel().world_group.rank_in_group,
+                            get_parallel().launch_world_size,
+                            get_parallel().world_group.cpu_group,
+                        )
+                    init_zbal_dfc_buffer()
         self.attn_backend = backends.attn_backend
         self.runner_ids.bind_and_verify_backends([self.attn_backend])
 
@@ -1969,6 +1997,12 @@ class ModelRunner:
         forward_batch: ForwardBatch,
         pp_proxy_tensors: Optional[PPProxyTensors],
     ) -> ModelRunnerOutput:
+        from sglang.srt.hardware_backend.npu.moe.zbal_dfc import (
+            use_zbal_dfc,
+            zbal_dfc_batch,
+        )
+        from sglang.srt.layers.dp_attention import get_dp_global_num_tokens
+
         prepare = getattr(self.model, "prepare_for_forward", None)
         if prepare is not None:
             prepare(forward_batch)
@@ -1984,6 +2018,7 @@ class ModelRunner:
         with (
             get_model().override(shared_experts=self.model.shared_experts_config),
             ctx_mgr,
+            contextlib.ExitStack() as batch_scope,
         ):
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
@@ -2019,6 +2054,16 @@ class ModelRunner:
             # padded token counts that graph eligibility and the collectives
             # depend on.
             self._prepare_eager_forward_batch(forward_batch)
+            if use_zbal_dfc():
+                if forward_batch.global_num_tokens_cpu is not None:
+                    token_bound = max(get_dp_global_num_tokens())
+                    is_prefill = forward_batch.is_extend_in_batch
+                else:
+                    token_bound = forward_batch._forward_num_tokens()
+                    is_prefill = forward_batch.forward_mode.is_extend()
+                batch_scope.enter_context(
+                    zbal_dfc_batch("prefill" if is_prefill else "decode", token_bound)
+                )
 
             # Deferred mamba COW/clear on the forward stream, before the extend
             # dispatch below reads the pool.

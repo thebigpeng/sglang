@@ -54,6 +54,7 @@ from sglang.kernels.ops.attention.kv_indices import (
 )
 from sglang.srt.configs.model_config import is_qwen4_exp
 from sglang.srt.distributed.parallel_state import graph_capture
+from sglang.srt.hardware_backend.npu.moe.zbal_dfc import zbal_dfc_batch
 from sglang.srt.layers.attention.base_attn_backend import SharedReadEnds
 from sglang.srt.layers.attention.dsa.utils import is_dsa_enable_prefill_cp
 from sglang.srt.layers.cp.bcg import supports_prefill_cp_bcg
@@ -827,7 +828,11 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         num_tokens: Optional[int] = None,
         raw_num_tokens: Optional[int] = None,
     ):
+        token_bound = (
+            num_tokens if num_tokens is not None else forward_batch._forward_num_tokens()
+        )
         with (
+            zbal_dfc_batch("prefill", token_bound),
             set_forward_batch(forward_batch),
             prefill_graph_scope(
                 full_graph=self._is_full_backend,
@@ -967,6 +972,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         set_is_extend_in_batch(False)
 
         with (
+            zbal_dfc_batch("prefill", num_tokens),
             set_forward_batch(fb),
             prefill_graph_scope(
                 full_graph=self._is_full_backend,
