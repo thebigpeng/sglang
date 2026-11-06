@@ -155,6 +155,12 @@ class NPUW4A8MXFP4FusedMoEMethod(FusedMoEMethodBase):
                 "not match w2_weight_scale_inv."
             )
 
+        from sglang.srt.hardware_backend.npu.moe.zbal_dfc import process_zbal_dfc_weights
+
+        if process_zbal_dfc_weights(layer, "w13", "w4a8"):
+            process_zbal_dfc_weights(layer, "w2", "w4a8")
+            return
+
         nz_format = NPUACLFormat.ACL_FORMAT_FRACTAL_NZ
         layer.w13_weight.data, w13_scale = prepare_w4a8_mxfp_weight(
             layer.w13_weight.data.view(torch.uint8),

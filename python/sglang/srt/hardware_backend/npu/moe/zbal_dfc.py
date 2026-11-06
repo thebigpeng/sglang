@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -32,12 +33,21 @@ def use_zbal_dfc() -> bool:
     )
 
 
+def _is_dsv4_w4a8(layer: FusedMoE) -> bool:
+    from sglang.srt.hardware_backend.npu.quantization.fp4_moe_methods import (
+        NPUW4A8MXFP4FusedMoEMethod,
+    )
+
+    return isinstance(getattr(layer, "quant_method", None), NPUW4A8MXFP4FusedMoEMethod)
+
+
 def validate_zbal_dfc(layer: FusedMoE) -> None:
     """Reject layer semantics which the DFC ABI cannot express."""
     from sglang.srt.environ import envs
     from sglang.srt.hardware_backend.npu.quantization.moe_methods import (
         NPUMXFP8MoEMethod,
         NPUW4A4MXFP4MoEMethod,
+        NPUW4A8MXFP4MoEMethod,
         NPUW8A8Int8MoEMethod,
     )
     from sglang.srt.hardware_backend.npu.utils import is_npu_arch35
@@ -63,19 +73,28 @@ def validate_zbal_dfc(layer: FusedMoE) -> None:
             f"layer_id={layer.layer_id}: DFC requires --moe-runner-backend auto or ascend, got {runner.value}"
         )
     # Restrict selection before any generic NZ transform can destroy the ND MX layout.
+    w4a8 = _is_dsv4_w4a8(layer)
     supported = (NPUW8A8Int8MoEMethod, NPUMXFP8MoEMethod, NPUW4A4MXFP4MoEMethod)
+    kernels = []
     for prefix in ("w13", "w2"):
-        kernel = getattr(getattr(layer, f"{prefix}_scheme", None), "kernel", None)
-        if type(kernel) not in supported:
+        kernel = (
+            getattr(layer.quant_method, f"{prefix}_kernel", None)
+            if w4a8
+            else getattr(getattr(layer, f"{prefix}_scheme", None), "kernel", None)
+        )
+        allowed = (NPUW4A8MXFP4MoEMethod,) if w4a8 else supported
+        if type(kernel) not in allowed:
             _reject(
-                f"layer_id={layer.layer_id}, {prefix}: DFC supports ModelSlim W8A8 INT8, MXFP8, and W4A4 MXFP4 only"
+                f"layer_id={layer.layer_id}, {prefix}: unsupported DFC kernel {type(kernel).__name__}; "
+                "expected ModelSlim INT8/MXFP8/MXFP4 or DSV4 W4A8"
             )
-    if type(layer.w13_scheme.kernel) is not type(layer.w2_scheme.kernel):
+        kernels.append(kernel)
+    if type(kernels[0]) is not type(kernels[1]):
         _reject(
             f"layer_id={layer.layer_id}: DFC requires matching w13/w2 quantization schemes"
         )
     if (
-        type(layer.w13_scheme.kernel) is not NPUW8A8Int8MoEMethod
+        type(kernels[0]) is not NPUW8A8Int8MoEMethod
         and not is_npu_arch35()
     ):
         _reject(f"layer_id={layer.layer_id}: MX DFC requires Ascend A5 architecture 35")
@@ -83,7 +102,13 @@ def validate_zbal_dfc(layer: FusedMoE) -> None:
         _reject(
             f"layer_id={layer.layer_id}: DFC requires gated silu, got {config.activation=}, {config.is_gated=}"
         )
-    for name in ("gemm1_alpha", "gemm1_beta", "gemm1_clamp_limit", "swiglu_limit"):
+    limit = config.swiglu_limit
+    if w4a8 and limit is not None and (
+        not math.isfinite(limit) or limit < 0 or limit > torch.finfo(torch.float32).max
+    ):
+        _reject(f"layer_id={layer.layer_id}: invalid W4A8 swiglu_limit={limit}")
+    unsupported = ("gemm1_alpha", "gemm1_beta", "gemm1_clamp_limit")
+    for name in unsupported + (() if w4a8 else ("swiglu_limit",)):
         if getattr(config, name) is not None:
             _reject(
                 f"layer_id={layer.layer_id}: DFC does not support {name}={getattr(config, name)}"
@@ -147,19 +172,22 @@ def _pack_mx_scale(scale: torch.Tensor, logical_k: int) -> torch.Tensor:
 
 
 def process_zbal_dfc_weights(layer: FusedMoE, prefix: str, kind: str) -> bool:
-    """Process each ModelSlim weight group before the generic NPU NZ transform."""
+    """Prepare offline expert weights before the generic NPU NZ transform."""
     if not use_zbal_dfc():
         return False
     validate_zbal_dfc(layer)
     processed = getattr(layer, "_zbal_dfc_weight_prefixes", set())
     if prefix in processed:
         return True
+    if (kind == "w4a8") != _is_dsv4_w4a8(layer):
+        _reject(f"layer_id={layer.layer_id}, {prefix}: weight kind={kind} does not match quantization method")
     weight = getattr(layer, f"{prefix}_weight").data
-    scale = getattr(layer, f"{prefix}_weight_scale").data
+    scale_name = f"{prefix}_weight_scale_inv" if kind == "w4a8" else f"{prefix}_weight_scale"
+    scale = getattr(layer, scale_name).data
     e = layer.num_local_experts
     h, d = layer.hidden_size, layer.intermediate_size_per_partition
     n, k = (2 * d, h) if prefix == "w13" else (h, d)
-    expected_shape = (e, n, k // 2 if kind == "mxfp4" else k)
+    expected_shape = (e, n, k // 2 if kind in ("mxfp4", "w4a8") else k)
     if tuple(weight.shape) != expected_shape:
         _reject(
             f"layer_id={layer.layer_id}, {prefix}: expected {expected_shape}, got {tuple(weight.shape)}"
@@ -188,7 +216,7 @@ def process_zbal_dfc_weights(layer: FusedMoE, prefix: str, kind: str) -> bool:
             _reject(
                 f"layer_id={layer.layer_id}: MX DFC requires hidden and intermediate dimensions divisible by 64"
             )
-        if kind == "mxfp4":
+        if kind in ("mxfp4", "w4a8"):
             fp4 = getattr(torch, "float4_e2m1fn_x2", None)
             if fp4 is None or weight.dtype != torch.uint8:
                 _reject(
@@ -207,12 +235,21 @@ def process_zbal_dfc_weights(layer: FusedMoE, prefix: str, kind: str) -> bool:
             )
         scale = _pack_mx_scale(scale, k)
         weight = weight.contiguous()
-    # ModelSlim loads [gate, up]; the DFC SwiGLU consumes the same split order.
+    # ModelSlim and DSV4 load [gate, up]; DFC consumes the same split order.
     setattr(layer, f"{prefix}_weight", torch.nn.Parameter(weight, requires_grad=False))
     setattr(
-        layer, f"{prefix}_weight_scale", torch.nn.Parameter(scale, requires_grad=False)
+        layer, scale_name, torch.nn.Parameter(scale, requires_grad=False)
     )
     layer._zbal_dfc_weight_prefixes = processed | {prefix}
+    layer._zbal_dfc_quant_mode = 6 if kind == "w4a8" else 1
+    if layer._zbal_dfc_weight_prefixes == {"w13", "w2"}:
+        logger.info(
+            "ZBAL DFC prepared layer_id=%s quant_mode=%s swiglu_limit=%s weight_dtype=%s",
+            layer.layer_id,
+            layer._zbal_dfc_quant_mode,
+            layer.moe_runner_config.swiglu_limit,
+            weight.dtype,
+        )
     return True
 
 
@@ -267,7 +304,7 @@ def forward_zbal_dfc(
     if getattr(layer, "_zbal_dfc_weight_prefixes", set()) != {"w13", "w2"}:
         _reject(
             f"layer_id={layer.layer_id}: ZBAL DFC weights were not prepared; "
-            "use ModelSlim W8A8 INT8, MXFP8, or W4A4 MXFP4"
+            "prepare both expert weights before forward"
         )
     if hidden_states.ndim != 2 or hidden_states.dtype not in (
         torch.bfloat16,
@@ -308,19 +345,22 @@ def forward_zbal_dfc(
         topk_weights = torch.zeros(
             (1, layer.top_k), dtype=torch.float32, device=hidden_states.device
         )
+    w4a8 = layer._zbal_dfc_quant_mode == 6
+    kwargs = {"swiglu_limit": layer.moe_runner_config.swiglu_limit or 0.0} if w4a8 else {}
     result = _get_zbal_dfc_buffer().dispatch_ffn_combine(
         x=hidden_states.contiguous(),
         topk_idx=topk_ids.to(torch.int32).contiguous(),
         topk_weights=topk_weights.float().contiguous(),
         weight1=layer.w13_weight,
-        scale1=layer.w13_weight_scale,
+        scale1=layer.w13_weight_scale_inv if w4a8 else layer.w13_weight_scale,
         weight2=layer.w2_weight,
-        scale2=layer.w2_weight_scale,
+        scale2=layer.w2_weight_scale_inv if w4a8 else layer.w2_weight_scale,
         # Common bound across ranks: remote combine offsets depend on this value.
         # Each source can route every token/top-k slot to this destination rank.
         max_output_size=capacity * layer.moe_ep_size * layer.top_k,
         num_experts=layer.num_experts,
-        quant_mode=1,
+        quant_mode=layer._zbal_dfc_quant_mode,
         mode=mode,
+        **kwargs,
     )
     return result[0][:tokens]
