@@ -6,6 +6,8 @@
 #
 # 部署方式：
 #   默认使用 ZBAL 完整 DFC；可切换 deepep 做非融合对照。
+#   额外 SGLang 参数可追加在脚本后，例如：
+#   bash test/run_dsv41.sh --disable-decode-cuda-graph
 #
 # 默认并行拓扑假设：
 #   每节点 8 张 NPU
@@ -107,8 +109,7 @@ export SGLANG_OPT_USE_HC_TRITON=0
 export SGLANG_OPT_USE_HC_TILELANG=0
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
-SGLANG_ROOT="${SGLANG_ROOT:-$REPO_ROOT/sglang}"
+SGLANG_ROOT="${SGLANG_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 if [[ ! -f "$SGLANG_ROOT/python/sglang/srt/hardware_backend/npu/moe/zbal_dfc.py" ]]; then
   echo "ERROR: missing ZBAL DFC integration under SGLANG_ROOT=$SGLANG_ROOT" >&2
   exit 1
@@ -298,7 +299,7 @@ LAUNCH_ARGS=(
   --reasoning-parser deepseek-v4
   --language-model-only
   --moe-a2a-backend "$MOE_A2A_BACKEND"
-  --moe-runner-backend ascend
+  --moe-runner-backend auto
   --fuseep-mode 2
   --disable-shared-experts-fusion
   --enable-metrics
@@ -371,7 +372,7 @@ cat "$LOG_FILE"
 # 不启动独立 Prefill/Decode 进程，不配置 PD transfer backend。
 
 set +e
-python3 -m sglang.launch_server "${LAUNCH_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
+python3 -m sglang.launch_server "${LAUNCH_ARGS[@]}" "$@" 2>&1 | tee -a "$LOG_FILE"
 PIPE_STATUS=( "${PIPESTATUS[@]}" )
 set -e
 
