@@ -1,0 +1,15 @@
+root@C01-A10-CPU6:/home/p00801009/memfabric_hybrid/app/zbal# python3 -c "import inspect; import sg1_kernel_npu.mem_cache.allocator as a; print(a.file); print(inspect.getsource(a.alloc_extend_kernel.fn))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'sg1_kernel_npu'
+root@C01-A10-CPU6:/home/p00801009/memfabric_hybrid/app/zbal# python3 -c "import inspect; import sgl_kernel_npu.mem_cache.allocator as a; print(a.file); print(inspect.getsource(a.alloc_extend_kernel.fn))"
+/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
+/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
+/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
+  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+AttributeError: module 'sgl_kernel_npu.mem_cache.allocator' has no attribute 'file'
+[ERROR] 2026-11-09-21:31:26 (PID:240840, Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception
