@@ -122,7 +122,7 @@ def server_config(args, backend):
         "--moe-a2a-backend",
         backend,
         "--moe-runner-backend",
-        "ascend",
+        "auto",
         "--fuseep-mode",
         "2",
         "--disable-shared-experts-fusion",

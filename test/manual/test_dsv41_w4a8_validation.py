@@ -1,6 +1,9 @@
 """CPU tests for the model acceptance verdicts and server isolation."""
 
+import argparse
 import importlib.util
+import runpy
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -92,6 +95,21 @@ class TestDsv41Validation(unittest.TestCase):
             self.assertEqual("--disable-decode-cuda-graph" in dfc_flags, mode == "eager")
             self.assertEqual("--cuda-graph-backend-prefill" in dfc_flags, mode == "prefill-decode")
             self.assertIn("--disable-shared-experts-fusion", dfc_flags)
+
+    def test_launchers_use_registered_moe_runner(self):
+        repo = Path(__file__).resolve().parents[2]
+        choices = runpy.run_path(str(repo / "python/sglang/srt/arg_groups/choices.py"))
+        parser = argparse.ArgumentParser(exit_on_error=False)
+        parser.add_argument("--moe-runner-backend", choices=choices["MOE_RUNNER_BACKEND_CHOICES"])
+        script = (repo / "test/run_dsv41.sh").read_text(encoding="utf-8")
+        launch_args = shlex.split(script.split("LAUNCH_ARGS=(", 1)[1].split("\n)", 1)[0])
+        configs = {"shell": launch_args}
+        for backend in ("deepep", "ascend_fuseep"):
+            _, configs[backend] = case.server_config(self.args(), backend)
+        for launcher, flags in configs.items():
+            with self.subTest(launcher=launcher):
+                parsed, _ = parser.parse_known_args(flags)
+                self.assertEqual(parsed.moe_runner_backend, "auto")
 
     def test_failed_requests_stop_only_the_launched_server(self):
         process, kill = MagicMock(), MagicMock()
