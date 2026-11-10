@@ -1,137 +1,58 @@
-root@C01-A10-CPU6:/home/p00801009/sglang/test# python manual/ascend/test_npu_swa_mapping.py
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
-Cannot detect CUDA architecture.
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4_nextn
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4_dspark
-INFO torch=2.13.0+cpu torch_npu=2.13.0 allocator=native
-INFO SGLang allocator=/home/p00801009/sglang/python/sglang/srt/hardware_backend/npu/allocator_npu.py
-INFO alloc_extend_kernel=/usr/local/python3.12.15/lib/python3.12/site-packages/sgl_kernel_npu/mem_cache/allocator.py
-INFO ALLOC size=19455104 tokens=6 page=1 indices=[128, 129, 130, 131, 132, 133]
-INFO ALLOC size=39040 tokens=6 page=1 indices=[128, 129, 130, 131, 132, 133]
-INFO WRITE tokens=6 mapping_numel=19455233
-INFO WRITE PASS tokens=6
-INFO READ PASS tokens=6
-INFO ALLOC size=19455104 tokens=1 page=2 indices=[256]
-INFO ALLOC size=39040 tokens=1 page=2 indices=[256]
-INFO WRITE tokens=1 mapping_numel=19455233
-INFO WRITE PASS tokens=1
-INFO READ PASS tokens=1
-INFO ALLOC size=19455104 tokens=1 page=3 indices=[384]
-INFO ALLOC size=39040 tokens=1 page=3 indices=[384]
-INFO WRITE tokens=1 mapping_numel=19455233
-INFO WRITE PASS tokens=1
-INFO READ PASS tokens=1
-INFO ALLOC size=19455104 tokens=6 page=4 indices=[512, 513, 514, 515, 516, 517]
-INFO ALLOC size=39040 tokens=6 page=4 indices=[512, 513, 514, 515, 516, 517]
-INFO WRITE tokens=6 mapping_numel=19455233
-INFO WRITE PASS tokens=6
-INFO READ PASS tokens=6
-INFO NPU_SWA_MAPPING PASS (native allocator, no model or DFC)
-root@C01-A10-CPU6:/home/p00801009/sglang/test# python3 - <<'PY'
-import inspect
-from sgl_kernel_npu.mem_cache.allocator import alloc_extend_kernel
-
-print(inspect.getsourcefile(alloc_extend_kernel.fn))
-print(inspect.getsource(alloc_extend_kernel.fn))
-PY
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:13: FutureWarning: triton.language.extra.cann.extension.atan2 is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.atan2 instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.atan2")
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:35: FutureWarning: triton.language.extra.cann.extension.isfinited is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.isfinited instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.isfinited")
-/usr/local/python3.12.15/lib/python3.12/site-packages/triton/language/extra/cann/extension/math_ops.py:49: FutureWarning: triton.language.extra.cann.extension.finitef is deprecated and will be removed in the next release; use triton.language.extra.cann.libdevice.finitef instead.
-  @_deprecated(replacement="triton.language.extra.cann.libdevice.finitef")
-Cannot detect CUDA architecture.
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4_nextn
-[sitecustomize] pre-import OK: sglang.srt.models.deepseek_v4_dspark
-/usr/local/python3.12.15/lib/python3.12/site-packages/sgl_kernel_npu/mem_cache/allocator.py
-@triton.jit
-def alloc_extend_kernel(
-    pre_lens_ptr,
-    seq_lens_ptr,
-    last_loc_ptr,
-    free_page_ptr,
-    out_indices,
-    bs_upper: tl.constexpr,
-    page_size: tl.constexpr,
-    max_num_extend_tokens: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr = 2048,
-):
-    pid = tl.program_id(0)
-
-    load_offset = tl.arange(0, bs_upper)
-    seq_lens = tl.load(seq_lens_ptr + load_offset, mask=load_offset <= pid)
-    pre_lens = tl.load(pre_lens_ptr + load_offset, mask=load_offset <= pid)
-    extend_lens = seq_lens - pre_lens
-
-    seq_len = tl.load(seq_lens_ptr + pid)
-    pre_len = tl.load(pre_lens_ptr + pid)
-    extend_len = seq_len - pre_len
-
-    sum_extend_lens = tl.sum(extend_lens)
-    output_start_loc = sum_extend_lens - extend_len
-
-    num_pages_after = (seq_lens + page_size - 1) // page_size
-    num_pages_before = (pre_lens + page_size - 1) // page_size
-    num_new_pages = num_pages_after - num_pages_before
-
-    num_page_start_loc_self = (seq_len + page_size - 1) // page_size - (
-        pre_len + page_size - 1
-    ) // page_size
-    sum_num_new_pages = tl.sum(num_new_pages)
-    new_page_start_loc = sum_num_new_pages - num_page_start_loc_self
-
-    # Part 1: fill the old partial page
-    last_loc = tl.load(last_loc_ptr + pid)
-    num_part1 = (
-        min(seq_len, (pre_len + page_size - 1) // page_size * page_size) - pre_len
-    )
-    offset_one_page = tl.arange(0, page_size)
-    tl.store(
-        out_indices + output_start_loc + offset_one_page,
-        last_loc + 1 + offset_one_page,
-        mask=offset_one_page < num_part1,
-    )
-    if pre_len + num_part1 == seq_len:
-        return
-
-    # Part 2: fill the new full pages
-    num_part2 = (
-        seq_len // page_size * page_size
-        - (pre_len + page_size - 1) // page_size * page_size
-    )
-
-    num_loop = tl.cdiv(max_num_extend_tokens, BLOCK_SIZE)
-    blk_offset = tl.arange(0, BLOCK_SIZE)
-    for i in range(num_loop):
-        offset_many_page = blk_offset + i * BLOCK_SIZE
-        page_start = tl.load(
-            free_page_ptr + new_page_start_loc + offset_many_page // page_size,
-            mask=offset_many_page < num_part2,
-        )
-        tl.store(
-            out_indices + output_start_loc + num_part1 + offset_many_page,
-            page_start * page_size + offset_many_page % page_size,
-            mask=offset_many_page < num_part2,
-        )
-
-    if pre_len + num_part1 + num_part2 == seq_len:
-        return
-
-    # Part 3: fill the new partial page
-    num_part3 = seq_len - seq_len // page_size * page_size
-    start_loc = tl.load(
-        free_page_ptr + new_page_start_loc + num_page_start_loc_self - 1
-    )
-    tl.store(
-        out_indices + output_start_loc + num_part1 + num_part2 + offset_one_page,
-        start_loc * page_size + offset_one_page,
-        mask=offset_one_page < num_part3,
-    )
-
+$ git push -u origin HEAD
+11:23:39.549385 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/bin
+11:23:39.566030 git.c:476               trace: built-in: git push -u origin HEAD
+11:23:39.579102 run-command.c:674       trace: run_command: GIT_DIR=.git git remote-https origin https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git
+11:23:39.579102 run-command.c:935       trace: start_command: git remote-https origin https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git
+11:23:39.588836 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:39.603339 git.c:774               trace: exec: git-remote-https origin https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git
+11:23:39.603869 run-command.c:674       trace: run_command: git-remote-https origin https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git
+11:23:39.603869 run-command.c:935       trace: start_command: git-remote-https origin https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git
+11:23:39.618195 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:40.457773 run-command.c:674       trace: run_command: 'git credential-manager store'
+11:23:40.458774 run-command.c:935       trace: start_command: 'C:/Program Files/Git/usr/bin/sh.exe' -c 'git credential-manager store' 'git credential-manager store'
+11:23:40.528909 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:40.548825 git.c:774               trace: exec: git-credential-manager store
+11:23:40.548825 run-command.c:674       trace: run_command: git-credential-manager store
+11:23:40.548825 run-command.c:935       trace: start_command: git-credential-manager store
+11:23:40.621071 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:40.641147 git.c:476               trace: built-in: git config --null --list
+11:23:40.743934 run-command.c:674       trace: run_command: 'git credential-wincred store'
+11:23:40.745450 run-command.c:935       trace: start_command: 'C:/Program Files/Git/usr/bin/sh.exe' -c 'git credential-wincred store' 'git credential-wincred store'
+11:23:40.803749 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:40.825834 git.c:774               trace: exec: git-credential-wincred store
+11:23:40.825834 run-command.c:674       trace: run_command: git-credential-wincred store
+11:23:40.825834 run-command.c:935       trace: start_command: git-credential-wincred store
+11:23:40.850154 run-command.c:674       trace: run_command: 'git credential-manager store'
+11:23:40.851223 run-command.c:935       trace: start_command: 'C:/Program Files/Git/usr/bin/sh.exe' -c 'git credential-manager store' 'git credential-manager store'
+11:23:40.912625 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:40.933615 git.c:774               trace: exec: git-credential-manager store
+11:23:40.933615 run-command.c:674       trace: run_command: git-credential-manager store
+11:23:40.935131 run-command.c:935       trace: start_command: git-credential-manager store
+11:23:41.002674 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:41.019776 git.c:476               trace: built-in: git config --null --list
+11:23:41.123891 run-command.c:674       trace: run_command: 'git credential-wincred store'
+11:23:41.125410 run-command.c:935       trace: start_command: 'C:/Program Files/Git/usr/bin/sh.exe' -c 'git credential-wincred store' 'git credential-wincred store'
+11:23:41.178437 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:41.201223 git.c:774               trace: exec: git-credential-wincred store
+11:23:41.201223 run-command.c:674       trace: run_command: git-credential-wincred store
+11:23:41.201223 run-command.c:935       trace: start_command: git-credential-wincred store
+11:23:41.226437 run-command.c:674       trace: run_command: git send-pack --stateless-rpc --helper-status --thin --progress https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git/ --stdin
+11:23:41.226437 run-command.c:935       trace: start_command: git send-pack --stateless-rpc --helper-status --thin --progress https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git/ --stdin
+11:23:41.236401 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:41.259511 git.c:476               trace: built-in: git send-pack --stateless-rpc --helper-status --thin --progress https://p_chenhui:jTQy14qQbSGW7b_utHNP1LCS@gitcode.com/p_chenhui/memfabric_hybrid.git/ --stdin
+11:23:41.272293 run-command.c:674       trace: run_command: git pack-objects --all-progress-implied --revs --stdout --thin --delta-base-offset --progress
+11:23:41.272293 run-command.c:935       trace: start_command: git pack-objects --all-progress-implied --revs --stdout --thin --delta-base-offset --progress
+11:23:41.282467 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/libexec/git-core
+11:23:41.302368 git.c:476               trace: built-in: git pack-objects --all-progress-implied --revs --stdout --thin --delta-base-offset --progress
+Enumerating objects: 368, done.
+Counting objects: 100% (368/368), done.
+Delta compression using up to 20 threads
+Compressing objects: 100% (169/169), done.
+Writing objects: 100% (313/313), 98.24 KiB | 7.02 MiB/s, done.
+Total 313 (delta 216), reused 232 (delta 140), pack-reused 0 (from 0)
+error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+11:23:41.703757 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/bin
+11:23:41.718789 git.c:476               trace: built-in: git config --bool core.sparseCheckout
